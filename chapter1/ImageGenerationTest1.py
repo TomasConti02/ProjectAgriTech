@@ -1,3 +1,12 @@
+import os
+import tensorflow as tf
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+
+# === PATH ===
+MODEL_PATH = "/content/drive/MyDrive/branch/models/unet_branch_segmentation_final_20251011_183040.keras"
+TUE_IMMAGINI_DIR = "/content/drive/MyDrive/branch/tue_immagini"
 def segmentazione_ibrida_bilanciata(image_path):
     """
     Approccio ibrido bilanciato - parametri ottimizzati
@@ -216,4 +225,25 @@ def valuta_solo_immagini_originali():
 # === ESECUZIONE ===
 print("🎯 ATTIVAZIONE APPROCCIO IBRIDO BILANCIATO")
 print("=" * 60)
+print("📥 Caricamento modello finale...")
+def dice_coefficient(y_true, y_pred, smooth=1e-6):
+    y_true_f = tf.keras.backend.flatten(y_true)
+    y_pred_f = tf.keras.backend.flatten(y_pred)
+    intersection = tf.keras.backend.sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (tf.keras.backend.sum(y_true_f) + tf.keras.backend.sum(y_pred_f) + smooth)
+
+def dice_loss(y_true, y_pred):
+    return 1 - dice_coefficient(y_true, y_pred)
+
+def combined_loss(y_true, y_pred):
+    bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
+    return bce + dice_loss(y_true, y_pred)
+model = tf.keras.models.load_model(
+    MODEL_PATH,
+    custom_objects={
+        'dice_coefficient': dice_coefficient,
+        'dice_loss': dice_loss,
+        'combined_loss': combined_loss
+    }
+)
 valuta_solo_immagini_originali()
