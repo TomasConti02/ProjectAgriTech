@@ -7,6 +7,36 @@ import matplotlib.pyplot as plt
 # === PATH ===
 MODEL_PATH = "/content/drive/MyDrive/branch/models/unet_branch_segmentation_final_20251011_183040.keras"
 TUE_IMMAGINI_DIR = "/content/drive/MyDrive/branch/tue_immagini"
+OUTPUT_DIR = "/content/drive/MyDrive/branch/risultati_rafforzati"  # Nuova directory per i risultati
+
+# Crea la directory di output se non esiste
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def dice_coefficient(y_true, y_pred, smooth=1e-6):
+    y_true_f = tf.keras.backend.flatten(y_true)
+    y_pred_f = tf.keras.backend.flatten(y_pred)
+    intersection = tf.keras.backend.sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (tf.keras.backend.sum(y_true_f) + tf.keras.backend.sum(y_pred_f) + smooth)
+
+def dice_loss(y_true, y_pred):
+    return 1 - dice_coefficient(y_true, y_pred)
+
+def combined_loss(y_true, y_pred):
+    bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
+    return bce + dice_loss(y_true, y_pred)
+
+# === CARICAMENTO MODELLO ===
+print("🧠 Caricamento modello U-Net...")
+model = tf.keras.models.load_model(
+    MODEL_PATH,
+    custom_objects={
+        'dice_coefficient': dice_coefficient,
+        'dice_loss': dice_loss,
+        'combined_loss': combined_loss
+    }
+)
+print("✅ Modello caricato con successo!")
+
 def segmentazione_ibrida_bilanciata(image_path):
     """
     Approccio ibrido bilanciato - parametri ottimizzati
@@ -97,6 +127,7 @@ def segmentazione_ibrida_bilanciata(image_path):
             final_mask[labels == i] = 0
 
     return final_mask, traditional_mask, model_mask * 255
+
 def segmentazione_ibrida_rafforzata(image_path):
     """
     Versione migliorata che rafforza le linee bianche nella maschera ibrida finale
@@ -207,17 +238,63 @@ def segmentazione_ibrida_rafforzata(image_path):
 
     return final_mask, traditional_mask, model_mask * 255
 
+def salva_risultati(image_path, final_mask_new, img_rgb, nome_suffisso="rafforzato"):
+    """
+    Salva i risultati della segmentazione
+    """
+    nome_base = os.path.splitext(os.path.basename(image_path))[0]
+    
+    # 1. Salva la maschera finale
+    mask_path = os.path.join(OUTPUT_DIR, f"{nome_base}_{nome_suffisso}_mask.png")
+    cv2.imwrite(mask_path, final_mask_new)
+    
+    # 2. Salva l'overlay
+    overlay = img_rgb.copy()
+    overlay[final_mask_new > 0] = [255, 0, 0]  # Colore rosso per la segmentazione
+    overlay_path = os.path.join(OUTPUT_DIR, f"{nome_base}_{nome_suffisso}_overlay.png")
+    cv2.imwrite(overlay_path, cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
+    
+    # 3. Salva immagine comparativa
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    
+    axes[0].imshow(img_rgb)
+    axes[0].set_title('Immagine Originale')
+    axes[0].axis('off')
+    
+    axes[1].imshow(img_rgb)
+    axes[1].imshow(final_mask_new, cmap='Reds', alpha=0.5)
+    axes[1].set_title('Segmentazione Rafforzata')
+    axes[1].axis('off')
+    
+    comparative_path = os.path.join(OUTPUT_DIR, f"{nome_base}_{nome_suffisso}_comparison.png")
+    plt.tight_layout()
+    plt.savefig(comparative_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"💾 Risultati salvati:")
+    print(f"   • Maschera: {os.path.basename(mask_path)}")
+    print(f"   • Overlay: {os.path.basename(overlay_path)}")
+    print(f"   • Comparativa: {os.path.basename(comparative_path)}")
+
 def confronto_rafforzamento(image_path):
     """
-    Mostra confronto tra vecchia e nuova versione
+    Mostra confronto tra vecchia e nuova versione e salva i risultati
     """
     img = cv2.imread(image_path)
+    if img is None:
+        print(f"❌ Impossibile caricare l'immagine: {image_path}")
+        return
+        
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     # Vecchia versione
     final_mask_old, traditional_old, model_old = segmentazione_ibrida_bilanciata(image_path)
     # Nuova versione
     final_mask_new, traditional_new, model_new = segmentazione_ibrida_rafforzata(image_path)
+
+    if final_mask_old is None or final_mask_new is None:
+        print("❌ Errore nella segmentazione")
+        return
 
     # Calcola statistiche
     area_old = np.sum(final_mask_old > 0) / final_mask_old.size * 100
@@ -273,6 +350,9 @@ def confronto_rafforzamento(image_path):
     plt.tight_layout()
     plt.show()
 
+    # SALVA I RISULTATI DELLA NUOVA VERSIONE
+    salva_risultati(image_path, final_mask_new, img_rgb, "rafforzato")
+
     if miglioramento > 0.5:
         print("✅ LINEE MOLTO MIGLIORATE!")
     elif miglioramento > 0.1:
@@ -284,6 +364,12 @@ def confronto_rafforzamento(image_path):
 def test_rafforzamento_linee():
     print("🎯 TEST RAFFORZAMENTO LINEE BIANCHE")
     print("=" * 50)
+    print(f"📁 Directory output: {OUTPUT_DIR}")
+
+    # Verifica che la directory esista
+    if not os.path.exists(TUE_IMMAGINI_DIR):
+        print(f"❌ Directory non trovata: {TUE_IMMAGINI_DIR}")
+        return
 
     immagini_originali = [
         os.path.join(TUE_IMMAGINI_DIR, f)
@@ -294,28 +380,22 @@ def test_rafforzamento_linee():
         and '_overlay' not in f
     ]
 
+    if len(immagini_originali) == 0:
+        print("❌ Nessuna immagine trovata")
+        return
+
+    print(f"📸 Trovate {len(immagini_originali)} immagini:")
+    for img in immagini_originali:
+        print(f"   • {os.path.basename(img)}")
+
     for img_path in immagini_originali:
         print(f"\n" + "="*40)
         confronto_rafforzamento(img_path)
-def dice_coefficient(y_true, y_pred, smooth=1e-6):
-    y_true_f = tf.keras.backend.flatten(y_true)
-    y_pred_f = tf.keras.backend.flatten(y_pred)
-    intersection = tf.keras.backend.sum(y_true_f * y_pred_f)
-    return (2. * intersection + smooth) / (tf.keras.backend.sum(y_true_f) + tf.keras.backend.sum(y_pred_f) + smooth)
 
-def dice_loss(y_true, y_pred):
-    return 1 - dice_coefficient(y_true, y_pred)
+    print(f"\n🎉 ELABORAZIONE COMPLETATA!")
+    print(f"📁 Tutti i risultati salvati in: {OUTPUT_DIR}")
 
-def combined_loss(y_true, y_pred):
-    bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
-    return bce + dice_loss(y_true, y_pred)
-model = tf.keras.models.load_model(
-    MODEL_PATH,
-    custom_objects={
-        'dice_coefficient': dice_coefficient,
-        'dice_loss': dice_loss,
-        'combined_loss': combined_loss
-    }
-)
-# Esegui il test di rafforzamento
-test_rafforzamento_linee()
+# === ESECUZIONE ===
+if __name__ == "__main__":
+    # Esegui il test di rafforzamento
+    test_rafforzamento_linee()
