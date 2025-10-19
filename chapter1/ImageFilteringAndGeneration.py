@@ -56,16 +56,24 @@ def segmentazione_ibrida_bilanciata(image_path):
         print(f"Errore: impossibile caricare l'immagine {image_path}")
         return None, None, None, None
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    original_h, original_w = img_rgb.shape[:2]
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) #la porto da bgr -> rgb
+    original_h, original_w = img_rgb.shape[:2] #prendo altezza e larghezza dell'immagine
 
     # === FASE 1: PREDIZIONE MODELLO ===
-    img_processed = cv2.resize(img_rgb, (256, 256))
-    img_processed = img_processed.astype(np.float32) / 255.0
-
+    img_processed = cv2.resize(img_rgb, (256, 256)) #ridimensiono 
+    img_processed = img_processed.astype(np.float32) / 255.0 #normalizzo
+    #img_processed immagine (256, 256, 3) e normalizzata su [0-1] per ogni pixel 
+    #la u net vuole un batch di images allroa faccio cosi (256, 256, 3) → (1, 256, 256, 3)
+    # [0].squeeze() -> tolgo infomazioni di batch e di profondità e tengo solo pixel matrix
     prediction = model.predict(np.expand_dims(img_processed, axis=0), verbose=0)[0].squeeze()
-    model_mask = (prediction > 0.15).astype(np.uint8)
-    model_mask = cv2.resize(model_mask, (original_w, original_h))
+    """
+    Questa riga binarizza la mappa delle probabilità.
+    Ogni pixel con probabilità > 0.15 → 1 (ramo)
+    Tutti gli altri → 0 (sfondo)
+    model_mask[i, j] = 1 se il modello è “abbastanza sicuro” (≥15%)
+    """
+    model_mask = (prediction > 0.15).astype(np.uint8) #crea una maschera binaria
+    model_mask = cv2.resize(model_mask, (original_w, original_h)) #riportiamo tutto alla forma orginale
 
     # === FASE 2: ELABORAZIONE TRADIZIONALE BILANCIATA ===
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
